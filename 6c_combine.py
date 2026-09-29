@@ -388,9 +388,13 @@ def combine_group(group: dict, page_by_url: dict, media_map: dict,
         return None
     log.info(f"  ✓ Received {len(rewritten.split())} words of Gutenberg HTML")
 
-    # Newest source date keeps the merged article feeling current
-    dates = [m.get("date_modified", "") for m in members if m.get("date_modified")]
-    newest = max(dates) if dates else ""
+    # Publish date = primary post's original publish date (fallback: earliest
+    # member). Newest modified date is kept separately for reference.
+    created = primary.get("date_created", "") or min(
+        [m.get("date_created", "") for m in members if m.get("date_created")] or [""])
+    modified = max(
+        [m.get("date_modified", "") for m in members if m.get("date_modified")] or [""])
+    newest = created or modified
     if newest and len(newest) == 10:
         newest = newest + "T00:00:00"
 
@@ -403,7 +407,9 @@ def combine_group(group: dict, page_by_url: dict, media_map: dict,
         "primary_url":      primary.get("url", ""),
         "member_urls":      [m.get("url", "") for m in members],
         "date":             newest,
-        "images_used":      images_used,
+        "date_created":     created,
+        "date_modified":    modified,
+        "images_used":     images_used,
         "rewritten_content": rewritten,
         "post_id":          None,
         "new_url":          None,

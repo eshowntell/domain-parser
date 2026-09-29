@@ -90,6 +90,79 @@ def _avg_sess_per_day(sessions_lifetime: int, date_created: str):
         return 0
 
 
+# ── Blog grading: traffic vs. time-on-site ─────────────────────
+BLOG_MIN_AGE_DAYS = 90    # floor for the views/day denominator (stops brand-new posts spiking)
+BLOG_TOO_NEW_DAYS = 180   # younger than this → "too new to judge"
+
+def _blog_views(page: dict) -> int:
+    """Lifetime views: GA4 pageviews if present, else 'Views' landing-page column, else sessions."""
+    for key in ("pageviews_lifetime", "stat_views", "sessions_lifetime"):
+        try:
+            v = int(float(page.get(key, 0) or 0))
+        except (TypeError, ValueError):
+            v = 0
+        if v:
+            return v
+    return 0
+
+
+def annotate_blog_scores(pages: list[dict]) -> None:
+    """
+    Adds blog_* fields in place to published posts (pages are left untouched):
+      blog_views_pct  views ÷ most-viewed post ×100        (top post = 100)
+      blog_age_pct    days published ÷ oldest post ×100    (oldest = 100)
+      blog_vpd        views per day since publish (age floored at BLOG_MIN_AGE_DAYS)
+      blog_score      percentile rank of blog_vpd among all posts (0–100)
+      blog_grade      A–F from blog_score
+      blog_diag       plain-English read: content problem vs. just needs time
+
+    Why views/day instead of  views% × (100 − age%):  that product gives the
+    oldest post 0 no matter how well it performs. Views/day rewards a post for
+    doing more with less time, which is the same intent without punishing
+    evergreen winners.
+    """
+    today = _date.today()
+    blogs = []
+    for p in pages:
+        if p.get("type") != "post" or p.get("status") != "publish" or is_artifact(p):
+            continue
+        try:
+            age = (today - _date.fromisoformat((p.get("date_created") or "")[:10])).days
+        except ValueError:
+            continue
+        blogs.append((p, _blog_views(p), max(age, 0)))
+    if not blogs:
+        return
+
+    max_views = max(v for _, v, _ in blogs) or 1
+    max_age   = max(a for _, _, a in blogs) or 1
+    vpds = sorted(v / max(a, BLOG_MIN_AGE_DAYS) for _, v, a in blogs)
+    n = len(vpds)
+
+    for p, views, age in blogs:
+        vpd = views / max(age, BLOG_MIN_AGE_DAYS)
+        below = sum(1 for x in vpds if x < vpd)
+        ties  = sum(1 for x in vpds if x == vpd)
+        score = round((below + ties / 2) / n * 100)
+        grade = "A" if score >= 80 else "B" if score >= 60 else "C" if score >= 40 else "D" if score >= 20 else "F"
+        if age < BLOG_TOO_NEW_DAYS:
+            diag = "Too new to judge"
+        elif score >= 60:
+            diag = "Strong"
+        elif score >= 40:
+            diag = "Average"
+        elif age >= 365:
+            diag = "Weak — content issue"
+        else:
+            diag = "Weak — watch"
+        p["blog_views_pct"] = round(views / max_views * 100)
+        p["blog_age_pct"]   = round(age / max_age * 100)
+        p["blog_vpd"]       = round(vpd, 2)
+        p["blog_score"]     = score
+        p["blog_grade"]     = grade
+        p["blog_diag"]      = diag
+
+
 def _compact_today() -> str:
     d = _date.today()
     return f"{d.month}/{d.day}/{str(d.year)[2:]}"
@@ -327,6 +400,7 @@ def build_inventory_tab(wb: Workbook, pages: list[dict], ga_start: str, ga_end: 
         "Pageviews (Lifetime)",
         "Avg Sessions/Day", "Pageviews (90 Days)",
         "Slug", "Template",
+        "Blog Views %", "Blog Age %", "Views/Day", "Blog Score", "Blog Grade", "Blog Diagnosis",
     ]
     write_header_row(ws, headers)
 
@@ -354,6 +428,12 @@ def build_inventory_tab(wb: Workbook, pages: list[dict], ga_start: str, ga_end: 
             page.get("pageviews_90d", 0),
             page.get("slug", ""),
             page.get("template", ""),
+            page.get("blog_views_pct", ""),
+            page.get("blog_age_pct", ""),
+            page.get("blog_vpd", ""),
+            page.get("blog_score", ""),
+            page.get("blog_grade", ""),
+            page.get("blog_diag", ""),
         ]
         for c, val in enumerate(row, start=1):
             cell = ws.cell(row=r, column=c, value=val)
@@ -763,6 +843,7 @@ def build_html(pages, menus, sim_data):
     # ── Build URL meta for enriching similarity pairs ──────────
     url_meta = {p.get("url","").rstrip("/"): {
         "sess":p.get("sessions_lifetime",0),"words":p.get("word_count",0),
+        "created":p.get("date_created",""),
         "modified":p.get("date_modified","")} for p in pages}
 
     # ── INV (no body text — keeps JSON small) ──────────────────
@@ -777,7 +858,14 @@ def build_html(pages, menus, sim_data):
             "status":   p.get("status",""),
             "grade":    label,
             "score":    score,
+            "created":  p.get("date_created",""),
             "modified": p.get("date_modified",""),
+            "b_views":  p.get("blog_views_pct"),
+            "b_age":    p.get("blog_age_pct"),
+            "b_vpd":    p.get("blog_vpd"),
+            "b_score":  p.get("blog_score"),
+            "b_grade":  p.get("blog_grade",""),
+            "b_diag":   p.get("blog_diag",""),
             "words":    p.get("word_count",0),
             "images":   p.get("image_count",0),
             "sess_lt":  p.get("sessions_lifetime",0),
@@ -1114,12 +1202,18 @@ a{color:#1155cc;text-decoration:none}a:hover{text-decoration:underline}
       <th onclick="sortInv(5)">Type ↕</th>
       <th onclick="sortInv(6)">Status ↕</th>
       <th onclick="sortInv(7)">Grade ↕</th>
-      <th onclick="sortInv(8)">Modified ↕</th>
-      <th onclick="sortInv(9)">Words ↕</th>
-      <th onclick="sortInv(10)">Images ↕</th>
-      <th onclick="sortInv(11)">Sessions """ + ga_start + """–""" + ga_end + """ ↕</th>
-      <th onclick="sortInv(12)">Engaged ↕</th>
-      <th onclick="sortInv(13)">Avg Time(s) ↕</th>
+      <th onclick="sortInv(8)">Created ↕</th>
+      <th onclick="sortInv(9)">Modified ↕</th>
+      <th onclick="sortInv(10)">Words ↕</th>
+      <th onclick="sortInv(11)">Images ↕</th>
+      <th onclick="sortInv(12)">Sessions """ + ga_start + """–""" + ga_end + """ ↕</th>
+      <th onclick="sortInv(13)">Engaged ↕</th>
+      <th onclick="sortInv(14)">Avg Time(s) ↕</th>
+      <th onclick="sortInv(15)" title="Views ÷ most-viewed post">Views % ↕</th>
+      <th onclick="sortInv(16)" title="Days published ÷ oldest post">Age % ↕</th>
+      <th onclick="sortInv(17)" title="Views per day since publish">Views/Day ↕</th>
+      <th onclick="sortInv(18)" title="Percentile rank of Views/Day among posts">Blog Grade ↕</th>
+      <th onclick="sortInv(19)">Diagnosis ↕</th>
     </tr></thead>
     <tbody id="inv-body"></tbody>
   </table>
@@ -1327,7 +1421,7 @@ function openDrawer(row, tr){
   const lnk=document.getElementById('d-url'); lnk.href=row.url; lnk.textContent=row.url;
   document.getElementById('dmeta').innerHTML=
     `<span>Status: ${badge(row.status)}</span><span>Words: ${fmt(row.words)}</span>`+
-    `<span>Sessions: ${fmt(row.sess_lt)}</span><span>Modified: ${row.modified||'—'}</span>`;
+    `<span>Sessions: ${fmt(row.sess_lt)}</span><span>Created: ${row.created||'—'}</span><span>Modified: ${row.modified||'—'}</span>`;
 
   // ── Media section ────────────────────────────────────────────
   const imgs  = (row.image_urls  || []).filter(Boolean);
@@ -1383,12 +1477,18 @@ function renderInventory(rows){
       <td><code style="font-size:10px">${r.type}</code>${r.artifact?' <span class="badge ba">artifact</span>':''}</td>
       <td>${badge(r.status)}</td>
       <td style="white-space:nowrap;font-weight:bold;color:${r.grade==='Migrate'?'#27ae60':r.grade==='Improve'?'#2E75B6':r.grade==='Review'?'#b45309':'#c0392b'}">${r.grade==='Migrate'?'✅':r.grade==='Improve'?'🔵':r.grade==='Review'?'🟡':'❌'} ${r.grade} <small style="color:#aaa;font-weight:normal">${r.score}</small></td>
+      <td>${dcell(r.created)}</td>
       <td>${dcell(r.modified)}</td>
       <td>${fmt(r.words)}</td>
       <td>${fmt(r.images)}</td>
       <td>${fmt(r.sess_lt)}</td>
       <td>${fmt(r.engaged)}</td>
       <td>${r.avg_time>0?r.avg_time:'—'}</td>
+      <td>${r.b_views!=null?r.b_views+'%':'—'}</td>
+      <td>${r.b_age!=null?r.b_age+'%':'—'}</td>
+      <td>${r.b_vpd!=null?r.b_vpd:'—'}</td>
+      <td style="white-space:nowrap;font-weight:bold">${r.b_grade?r.b_grade+' <small style="color:#aaa;font-weight:normal">'+r.b_score+'</small>':'—'}</td>
+      <td style="white-space:nowrap;font-size:11px">${r.b_diag||'—'}</td>
     </tr>`;
   }).join('');
   document.getElementById('row-count').textContent=rows.length+' rows';
@@ -1641,7 +1741,7 @@ function switchNavTab(p,el){
 }
 function sortInv(col){
   if(sortCol===col) sortAsc=!sortAsc; else{sortCol=col;sortAsc=true;}
-  const keys=[null,null,null,'url','title','type','status','score','modified','words','images','sess_lt','engaged','avg_time'];
+  const keys=[null,null,null,'url','title','type','status','score','created','modified','words','images','sess_lt','engaged','avg_time','b_views','b_age','b_vpd','b_score','b_diag'];
   INV.sort((a,b)=>{const k=keys[col],av=a[k]??'',bv=b[k]??'';
     return(typeof av==='number'?av-bv:String(av).localeCompare(String(bv)))*(sortAsc?1:-1);});
   filterTable();
@@ -1733,6 +1833,8 @@ def main():
     menus    = load_json(DATA_MENUS,    fallback=[])
     sim_data = load_json(DATA_CLUSTERS, fallback=None)
 
+    annotate_blog_scores(pages)
+    log.info(f"Blog posts graded: {sum(1 for p in pages if 'blog_score' in p)}")
     log.info(f"Pages: {len(pages)}  |  Menu items: {len(menus)}  |  "
              f"Similarity data: {'yes' if sim_data else 'no'}")
 

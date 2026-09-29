@@ -37,6 +37,7 @@ DEFAULT_CSV = r"C:\Users\ErikS\Documents\coding_project\domain_parser\Landing_pa
 # 'sessions_lifetime' is the key one — drives the summary stats.
 GA4_COLUMN_MAP = {
     "sessions":                              "sessions_lifetime",
+    "views":                                 "pageviews_lifetime",
     "engaged sessions":                      "engaged_sessions",
     "active users":                          "active_users",
     "new users":                             "new_users",

@@ -569,6 +569,7 @@ def main():
             "h1_content":    "",
             "type":          type_slug,
             "status":        status,
+            "date_created":  page.get("date_created", ""),
             "date_modified": page.get("date_modified", ""),
             "body_text":     "",
             "word_count":    0,

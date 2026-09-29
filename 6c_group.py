@@ -108,6 +108,15 @@ def load_scorer():
         return None
 
 
+def annotate_blog_grades(pages: list[dict]) -> None:
+    """Stamp blog_* grade fields (from 5_report) onto inventory posts, in place."""
+    try:
+        from importlib import import_module
+        import_module("5_report").annotate_blog_scores(pages)
+    except Exception as e:
+        log.warning(f"  Blog grading unavailable: {e}")
+
+
 def matches_template(title: str) -> str | None:
     """Return the matched template phrase if the title looks like a templated
     monthly post, else None."""
@@ -157,6 +166,7 @@ def load_inventory() -> dict[str, dict]:
     with open(src, encoding="utf-8") as f:
         pages = json.load(f)
     log.info(f"  Inventory: {len(pages)} pages from {src}")
+    annotate_blog_grades(pages)
     return {p.get("url", "").rstrip("/"): p for p in pages}
 
 
@@ -193,7 +203,10 @@ def enrich_member(url: str, inv: dict[str, dict], tags: dict[str, dict],
         "wp_status":     page.get("status", ""),
         "date_modified": page.get("date_modified", ""),
         "date_created":  page.get("date_created", ""),
-        "word_count":    int(page.get("word_count", 0) or 0),
+        "blog_score":    page.get("blog_score"),
+        "blog_grade":    page.get("blog_grade", ""),
+        "blog_diag":     page.get("blog_diag", ""),
+        "word_count":   int(page.get("word_count", 0) or 0),
         "sessions_lifetime":  int(page.get("sessions_lifetime", 0) or 0),
         "pageviews_lifetime": int(page.get("pageviews_lifetime", 0) or 0),
         "category":      page.get("category", ""),
@@ -360,8 +373,8 @@ def classify_cluster(cluster: dict, force: bool) -> dict | None:
         snippet = (m.get("excerpt") or "")[:160]
         lines.append(f"\n[{i}] TITLE: {m['title']}")
         lines.append(f"    URL: {m['url']}")
-        lines.append(f"    DATE: {m.get('date_modified','?')}  WORDS: {m['word_count']}  "
-                     f"SESSIONS: {m['sessions_lifetime']}")
+        lines.append(f"    CREATED: {m.get('date_created') or '?'}  MODIFIED: {m.get('date_modified') or '?'}  "
+                     f"WORDS: {m['word_count']}  SESSIONS: {m['sessions_lifetime']}")
         if snippet:
             lines.append(f"    EXCERPT: {snippet}")
     lines.append("\nClassify the cluster now. Return ONLY the JSON object.")
@@ -632,10 +645,12 @@ function memberRow(c, s, m){
       <div class="purl">${esc(m.url)}</div>
     </td>
     <td class="c"><span class="pill ${m.type}">${esc(m.type||'?')}</span></td>
+    <td class="c">${esc(m.date_created||'')}</td>
     <td class="c">${esc(m.date_modified||'')}</td>
     <td class="c">${m.word_count||0}</td>
     <td class="c">${m.sessions_lifetime||0}</td>
     <td class="c">${score}</td>
+    <td class="c" title="${esc(m.blog_diag||'')}">${m.blog_grade?esc(m.blog_grade)+' <small>'+m.blog_score+'</small>':'–'}</td>
   </tr>`;
 }
 
@@ -679,7 +694,7 @@ function clusterCard(c, s){
     <div class="rationale">${esc(c.recommended_rationale)}${c.ai_rationale?' · AI: '+esc(c.ai_rationale):''}</div>
     <div class="body">
       <table>
-        <tr><th>Keep</th><th>Primary</th><th>Page</th><th>WP</th><th>Modified</th><th>Words</th><th>Sess.</th><th>Score</th></tr>
+        <tr><th>Keep</th><th>Primary</th><th>Page</th><th>WP</th><th>Created</th><th>Modified</th><th>Words</th><th>Sess.</th><th>Score</th><th title="Views/day percentile among all posts">Blog Grade</th></tr>
         ${rows}
       </table>
     </div>

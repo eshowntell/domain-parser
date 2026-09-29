@@ -173,7 +173,11 @@ def post_to_new_site(page: dict, rewritten_html: str) -> int | None:
     category_id   = config.CATEGORY_MAP.get(category_name, 1)
 
     # Date — WP requires ISO 8601: YYYY-MM-DDTHH:MM:SS
-    original_date = (page.get("modified", "") or page.get("date_modified", "") or "").strip()
+    # Prefer the original publish date; fall back to last-modified if unknown.
+    original_date = (
+        page.get("created", "") or page.get("date_created", "") or
+        page.get("modified", "") or page.get("date_modified", "") or ""
+    ).strip()
     # Normalise space-separated datetime to T-separated
     original_date = original_date.replace(" ", "T")
     # Bare date only → add midnight time
@@ -253,6 +257,7 @@ def load_solo_blogs() -> list[dict]:
             "headings":   r.get("headings", ""),
             "image_urls": r.get("image_urls", []),
             "video_urls": r.get("video_urls", []),
+            "created":    r.get("created", ""),
             "modified":   r.get("modified", ""),
             "note":       r.get("note", ""),
             # Always a post
@@ -291,6 +296,7 @@ def load_keeper_csv() -> list[dict]:
                 "headings":   [],
                 "image_urls": [],
                 "video_urls": [],
+                "created":    "",
                 "modified":   "",
                 "note":       "",
                 "type":       "post" if is_post else "page",

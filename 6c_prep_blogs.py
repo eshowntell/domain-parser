@@ -165,6 +165,7 @@ def load_blog_urls() -> dict[str, dict]:
                 "title":    row[URL_COL["title"]].strip(),
                 "grade":    row[URL_COL["grade"]].strip(),
                 "score":    _int(row[URL_COL["score"]]),
+                "created":  row[URL_COL["created"]].strip(),
                 "modified": row[URL_COL["modified"]].strip(),
                 "words":    _int(row[URL_COL["words"]]),
                 "sessions": _int(row[URL_COL["sessions"]]),
@@ -220,7 +221,7 @@ def merge_records(urls: dict, content: dict) -> list[dict]:
             merged.append({
                 "url": url, "title": c.get("title", ""), "grade": "🟡 Review",
                 "score": 0, "sessions": 0, "engaged": 0, "avg_time": 0.0,
-                "words": len(c.get("body_text","").split()), "modified": "",
+                "words": len(c.get("body_text","").split()), "created": "", "modified": "",
                 "body_text": c.get("body_text",""), "image_urls": c.get("image_urls",[]),
                 "video_urls": c.get("video_urls",[]), "headings": c.get("headings",""), "slug": "",
             })
